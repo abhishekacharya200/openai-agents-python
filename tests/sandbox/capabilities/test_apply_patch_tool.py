@@ -10,6 +10,7 @@ import pytest
 
 import agents.sandbox.apply_patch as sandbox_apply_patch
 from agents import Agent, ApplyPatchTool, CustomTool, RunHooks
+from agents.apply_diff import apply_diff
 from agents.editor import ApplyPatchOperation, ApplyPatchResult
 from agents.items import ToolApprovalItem, ToolCallOutputItem
 from agents.models.openai_responses import Converter
@@ -55,6 +56,45 @@ class TestSandboxApplyPatchTool:
         assert (
             'UpdateFile := "*** Update File: " path NEWLINE [ MoveTo ] Hunk { Hunk }' in description
         )
+
+    @pytest.mark.parametrize(
+        "line",
+        ["page one\fpage two", 'const s = "a\u2028b";', "x\x85y", "a\x1cb", "a\rb"],
+        ids=["form-feed", "line-separator", "next-line", "file-separator", "bare-cr"],
+    )
+    def test_parser_only_splits_patch_lines_on_lf(self, line: str) -> None:
+        tool = SandboxApplyPatchTool(session=scripted_sandbox_session())
+
+        operations = tool.parse_custom_input(
+            f"*** Begin Patch\n*** Add File: notes.txt\n+{line}\n*** End Patch\n"
+        )
+
+        assert len(operations) == 1
+        assert operations[0].diff == f"+{line}\n"
+
+    def test_parser_keeps_unicode_line_separator_in_update_context(self) -> None:
+        tool = SandboxApplyPatchTool(session=scripted_sandbox_session())
+        original = 'const s = "a\u2028b";\nconst n = 1;\n'
+
+        operations = tool.parse_custom_input(
+            "*** Begin Patch\n*** Update File: app.js\n@@\n"
+            ' const s = "a\u2028b";\n-const n = 1;\n+const n = 2;\n*** End Patch\n'
+        )
+
+        assert len(operations) == 1
+        diff = operations[0].diff
+        assert diff is not None
+        assert apply_diff(original, diff) == 'const s = "a\u2028b";\nconst n = 2;\n'
+
+    def test_parser_accepts_crlf_patches(self) -> None:
+        tool = SandboxApplyPatchTool(session=scripted_sandbox_session())
+
+        operations = tool.parse_custom_input(
+            "*** Begin Patch\r\n*** Add File: notes.txt\r\n+hello\r\n*** End Patch\r\n"
+        )
+
+        assert len(operations) == 1
+        assert operations[0].diff == "+hello\n"
 
     def test_converter_uses_sandbox_custom_apply_patch_tool_config(self) -> None:
         tool = SandboxApplyPatchTool(session=scripted_sandbox_session())

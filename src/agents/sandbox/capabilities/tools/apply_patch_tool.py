@@ -334,8 +334,17 @@ def _parse_apply_patch_operation_json(operation: object) -> ApplyPatchOperation:
     )
 
 
+def _split_patch_lines(raw_input: str) -> list[str]:
+    # Split only on LF, like the grammar and apply_diff. str.splitlines() also breaks on
+    # characters such as form feed or U+2028, which can appear inside a patch line.
+    lines = raw_input.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return [line[:-1] if line.endswith("\r") else line for line in lines]
+
+
 def _parse_apply_patch_input(raw_input: str) -> list[ApplyPatchOperation]:
-    lines = raw_input.splitlines()
+    lines = _split_patch_lines(raw_input)
     if not lines or lines[0] != _BEGIN_PATCH:
         raise ValueError("apply_patch input must start with '*** Begin Patch'")
     if len(lines) < 2 or lines[-1] != _END_PATCH:
